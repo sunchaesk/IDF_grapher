@@ -22,6 +22,10 @@ import ply.yacc as yacc
 from typing import List
 
 import pprint
+import json # json.dumps is used for pprinting dictionaries
+
+import networkx as nx
+import matplotlib.pyplot as plt
 
 pp = pprint.PrettyPrinter(indent=4)
 
@@ -131,11 +135,70 @@ class Node:
             assert isinstance(connections, list)
             self.connections = connections
 
-def find_connections(parsed_idf):
+def get_zone_list(parsed_idf):
+    building_surfaces = res['BUILDINGSURFACE:DETAILED']
+    surfaces_set = set()
+    for building_surface in building_surfaces:
+        surfaces_set.add(building_surface[4])
+    return list(surfaces_set)
+
+def get_surface_to_zone_dict(parsed_idf) -> dict:
+    '''
+    key: surface_name
+    val: zone that the surface is in
+    '''
+    OUTSIDE_BOUNDARY_CONDITION = 6
+    NAME = 1
+    ZONE_NAME = 4
+
+    ret_dict = dict()
+    building_surfaces = res['BUILDINGSURFACE:DETAILED']
+
+    # filter ignorable surfaces (eg.Adiabatic)
+    for building_surface in building_surfaces:
+        if building_surface[OUTSIDE_BOUNDARY_CONDITION].upper() not in ['SURFACE', 'ZONE', 'OUTDOORS', 'GROUND']:
+            continue
+        else:
+            ret_dict[building_surface[NAME]] = building_surface[ZONE_NAME]
+    return ret_dict
+
+def get_surface_connect_surface(parsed_idf) -> dict:
+    '''
+    key: surface name
+    val: get zone the surface is connected to
+    '''
+    OUTSIDE_BOUNDARY_CONDITION = 6
+    OUTSIDE_BOUNDARY_CONDITION_OBJECT = 7
+    NAME = 1
+    ZONE_NAME = 4
+
+    ret_dict = dict()
+    building_surfaces = res['BUILDINGSURFACE:DETAILED']
+
+    for building_surface in building_surfaces:
+        boundary_condition = building_surface[OUTSIDE_BOUNDARY_CONDITION]
+        if boundary_condition == "Surface":
+            ret_dict[building_surface[NAME]] = building_surface[OUTSIDE_BOUNDARY_CONDITION_OBJECT]
+        elif boundary_condition == "Ground":
+            ret_dict[building_surface[NAME]] = "Ground"
+        elif boundary_condition == "Outdoors":
+            ret_dict[building_surface[NAME]] = "Outdoors"
+        elif boundary_condition == "Zone":
+            ret_dict[building_surface[NAME]] = building_surface[OUTSIDE_BOUNDARY_CONDITION_OBJECT]
+        else:
+            # e.g. adiabatic
+            continue
+
+    return ret_dict
+
+def directed_zone_connections(parsed_idf) -> list:
     '''
     @param: parsed_idf - idf file parsed into a dict
     NOTE:
     - outside boundary condition:
+
+    connections of zones. Converting the outputted list will result in a directed graph
+    of the zone connection dynamics
     '''
     # below is const for BuildingSurface:Detailed IDF obj
     BUILDING_SURFACE_DETAILED = 0
@@ -152,11 +215,74 @@ def find_connections(parsed_idf):
     NUMBER_OF_VERTICES = 11
     # 12 ~ 23 vertices X,Y,Z stuff
 
+    # get surface_to_zone dict
+    surface_to_zone = get_surface_to_zone_dict(parsed_idf)
+
+    # get surface_to_surface connection dict
+    surface_connect_surface = get_surface_connect_surface(parsed_idf)
+
+    # get zone_list
+    zone_list = get_zone_list(parsed_idf)
+
+    zone_connection_dict = dict()
+    zone_connection_list = []
+    for surface in surface_to_zone.keys():
+        start_zone = surface_to_zone[surface]
+
+        connected_surface = surface_connect_surface[surface]
+        # case 1: connected_surface is Ground
+        # case 2: connected_surface is Zone name
+        # case 3: connecte_surface is Outdoors
+        if connected_surface == "Outdoors":
+            #zone_connection_dict[start_zone] = 'Outdoors'
+            zone_connection_list.append([start_zone, 'Outdoors'])
+        elif connected_surface == "Ground":
+            #zone_connection_dict[start_zone] = 'Ground'
+            zone_connection_list.append([start_zone, 'Ground'])
+        elif connected_surface in zone_list:
+            #zone_connection_dict[start_zone] = connected_surface # it would be "connected_zone" for this case
+            zone_connection_list.append([start_zone, connected_surface])
+        else:
+            end_zone = surface_to_zone[surface_connect_surface[surface]]
+            #zone_connection_dict[start_zone] = end_zone
+            zone_connection_list.append([start_zone, end_zone])
+
+    return zone_connection_list
+
+def directed_to_undirected_zone(directed_list):
+    '''
+    @param: directed_list - list that represents the zone connections as a directed graph
+    directed_list: List[List(str, str)]
+    '''
+    undirected_graph = []
+    for connection in directed_list:
+        start, end = connection
+        undirected_graph.append([start, end])
+        undirected_graph.append([end, start])
+
+    return list(undirected_graph)
+
+def visualize_connections(connections):
+    G = nx.Graph()
+    for connection in connections:
+        start, end = connection
+        G.add_edge(start, end)
+    pos = nx.spring_layout(G, seed=42)  # You can use different layout algorithms if needed
+    nx.draw(G, pos, with_labels=True, node_size=1000, font_size=10, font_weight="bold")
+    plt.show()
 
 if __name__ == "__main__":
-    #idf_file = open('./5ZoneAirCooledConvCoef.idf', 'r')
-    idf_file = open('./in.idf', 'r')
+    idf_file = open('./5ZoneAirCooledConvCoef.idf', 'r')
+    # idf_file = open('./in.idf', 'r')
     f = idf_file.read()
     res = parse(f)
-    #print(res['BUILDINGSURFACE:DETAILED'][0], type(res['BUILDINGSURFACE:DETAILED']))
-    pp.pprint(res['ZONE'])
+
+    #print(json.dumps(find_connections(res), indent=4))
+    l = directed_zone_connections(res)
+    l2 = directed_to_undirected_zone(l)
+    visualize_connections(l2)
+    #pp.pprint(l2)
+
+    #print(json.dumps(get_surface_to_zone_dict(res), indent=4))
+    # print(res['BUILDINGSURFACE:DETAILED'], type(res['BUILDINGSURFACE:DETAILED']))
+    # pp.pprint(get_zone_list(res))
