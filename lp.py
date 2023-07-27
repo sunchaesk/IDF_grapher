@@ -136,7 +136,7 @@ class Node:
             self.connections = connections
 
 def get_zone_list(parsed_idf):
-    building_surfaces = res['BUILDINGSURFACE:DETAILED']
+    building_surfaces = parsed_idf['BUILDINGSURFACE:DETAILED']
     surfaces_set = set()
     for building_surface in building_surfaces:
         surfaces_set.add(building_surface[4])
@@ -152,7 +152,7 @@ def get_surface_to_zone_dict(parsed_idf) -> dict:
     ZONE_NAME = 4
 
     ret_dict = dict()
-    building_surfaces = res['BUILDINGSURFACE:DETAILED']
+    building_surfaces = parsed_idf['BUILDINGSURFACE:DETAILED']
 
     # filter ignorable surfaces (eg.Adiabatic)
     for building_surface in building_surfaces:
@@ -173,7 +173,7 @@ def get_surface_connect_surface(parsed_idf) -> dict:
     ZONE_NAME = 4
 
     ret_dict = dict()
-    building_surfaces = res['BUILDINGSURFACE:DETAILED']
+    building_surfaces = parsed_idf['BUILDINGSURFACE:DETAILED']
 
     for building_surface in building_surfaces:
         boundary_condition = building_surface[OUTSIDE_BOUNDARY_CONDITION]
@@ -262,6 +262,10 @@ def directed_to_undirected_zone(directed_list):
 
     return list(undirected_graph)
 
+def main(parsed_idf):
+    l = directed_zone_connections(parsed_idf)
+    return directed_to_undirected_zone(l)
+
 def visualize_connections(connections):
     G = nx.Graph()
     for connection in connections:
@@ -271,15 +275,41 @@ def visualize_connections(connections):
     nx.draw(G, pos, with_labels=True, node_size=1000, font_size=10, font_weight="bold")
     plt.show()
 
+def generate_connections(idf_f_path: str):
+    idf_file = open(idf_f_path, 'r')
+    f = idf_file.read()
+    res = parse(f)
+    return main(res)
+
+def generate_adjacency(idf_f_path: str):
+    edges_list: list = generate_connections(idf_f_path)
+    # Create an empty adjacency list dictionary
+    adjacency_list = {}
+
+    # Convert the list of edges into an adjacency list dictionary
+    for edge in edges_list:
+        node1, node2 = edge
+        if node1 not in adjacency_list:
+            adjacency_list[node1] = []
+        if node2 not in adjacency_list:
+            adjacency_list[node2] = []
+
+        adjacency_list[node1].append(node2)
+        adjacency_list[node2].append(node1)
+
+    for zone in adjacency_list:
+        adjacency_list[zone] = list(set(adjacency_list[zone]))
+
+    return adjacency_list
+
 if __name__ == "__main__":
-    idf_file = open('./5ZoneAirCooledConvCoef.idf', 'r')
-    # idf_file = open('./in.idf', 'r')
+    # idf_file = open('./5ZoneAirCooledConvCoef.idf', 'r')
+    idf_file = open('./in.idf', 'r')
     f = idf_file.read()
     res = parse(f)
 
     #print(json.dumps(find_connections(res), indent=4))
-    l = directed_zone_connections(res)
-    l2 = directed_to_undirected_zone(l)
+    l2 = main(res)
     visualize_connections(l2)
     #pp.pprint(l2)
 
